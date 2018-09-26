@@ -1,0 +1,359 @@
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Gopher war</title>
+  <style>
+  body {
+    cursor: none;
+    overflow: hidden;
+    background: url('/static/images/background.png') no-repeat;
+    background-size: cover;
+  }
+  .body-gameover {
+    cursor: default;
+    background-image: url('/static/images/gameover.png');
+    background-size: contain;
+  }
+  .target {
+    background-image: url('/static/images/target.png');
+    width: 100px;
+    height: 100px;
+    background-size: cover;
+    position: absolute;
+    left: 0px;
+    top: 0px;
+  }
+  .target-name {
+    position: absolute;
+    bottom: -20px;
+    text-align: center;
+    color: blueviolet;
+  }
+  .bomb {
+    background-image: url('/static/images/bomb.png');
+    width: 30px;
+    height: 30px;
+    background-size: cover;
+    position: absolute;
+    left: 0px;
+    top: 0px;
+  }
+  .missile {
+    background-image: url('/static/images/missile.png');
+    width: 50px;
+    height: 50px;
+    background-size: cover;
+    position: absolute;
+    left: 0px;
+    top: 0px;
+  }
+  .msg {
+    font-size: 20px;
+    color: red;
+  }
+  @keyframes background-animation {
+    from {background-position: 0 0;}
+    to {background-position: 100% 0;}
+  }
+  </style>
+  </head>
+  <body>
+    <script>
+      var url = "ws://" + window.location.host + "/ws";
+      var wsOpened = false;
+      var myid = -1;
+      var mylife = -1;
+      var mysize = -1;
+      var myname = "";
+      var mycharge = "none"
+      var prevX = 0;
+      var prevY = 0;
+      var bulletDirection = 0;
+      var missileload = true;
+      var timerid = undefined;
+      var chargingTimerid = undefined;
+      var chargedTimerid = undefined;
+      var config = {
+        maxLife: 5,
+        maxSize: 100,
+        bombLife: 30,
+        bombSize: 30,
+        bombSpeed: 20,
+        bombFire: 24,
+        bombDmg: 1,
+        missileLife: 40,
+        missileSize: 50,
+        missileSpeed: 32,
+        missileFire: 36,
+        missileDmg: 4,
+        dmgSize: 12,
+        missileCharging: 300,
+        missileCharged: 700,
+        dmgMessage: "Ouch...",
+        missileMessage: "Help me!!",
+      };
+      initWebsocket();
+
+      function initWebsocket(){
+        ws = new WebSocket(url);
+        ws.onopen = function (event) {
+          wsOpened = true;
+          console.log("ws connected")
+        }
+        ws.onmessage = function (msg) {
+          var cmds = {"appear": appear, "show": show, "bullet": bullet, "hit":hit, "miss": miss, "dead": dead};
+          if (msg.data) {
+            var parts = msg.data.split(" ")
+            var cmd = cmds[parts[0]];
+            if (cmd) {
+              cmd.apply(null, parts.slice(1));
+            }
+          }
+        };
+      }
+      //init (send config to server)
+      function init() {
+        //initWebsocket();
+        console.log("ws is opened = "+ wsOpened)
+        if (wsOpened === false) {
+          console.log("Socket connection is not established yet.");
+          setTimeout(()=>{
+            console.log("ws is opened(waited) = "+ wsOpened)
+            ws.send("init " + myname + " " +JSON.stringify(config));
+            console.log("Starting refresh event...")
+            timerid = setInterval(refreshEvent, 25);
+          }, 1000);
+        } else {
+          ws.send("init " + myname + " " +JSON.stringify(config));
+          console.log("Starting refresh event...")
+          timerid = setInterval(refreshEvent, 25);
+        }
+      }
+      //start
+      function appear(id) {
+        myid = id;
+        mylife = config.maxLife;
+        mysize = config.maxSize;
+        mycharge = "none";
+        missileload = true;
+      }
+      //"show %s %d %d %d %s %s", ID, X, Y, LIFE, NAME, CHARGE
+      function show(id, x, y, life, name, charge) {
+        if (life <= 0) {
+          return;
+        }
+        var node = document.getElementById("target-" + id);
+        var newsize = config.maxSize - config.dmgSize*(config.maxLife-parseInt(life));
+        if (!node) {
+          node = document.createElement("div");
+          document.body.appendChild(node);
+          node.className = "target";
+          node.style.zIndex = id + 1;
+          node.id = "target-" + id;
+          text = document.createElement("div")
+          node.appendChild(text)
+          text.className = "target-name";
+          text.textContent = name;
+          text.style.left = "30px";
+        }
+        node.style.left = (parseInt(x) - newsize/2) + "px";
+        node.style.top = (parseInt(y) - newsize/2) + "px";
+        node.style.width = newsize + "px";
+        node.style.height = newsize + "px";
+        if (charge === "charging") {
+          node.style.border = "5px dotted yellow";
+        } else if (charge === "charged"){
+          node.style.border = "5px double red";
+        } else {
+          node.style.border = "none";
+        }
+      }
+      //"bullet %s %d %d %d %t", ID, X, Y, DIRECTION, SPECIAL
+      function bullet(id, x, y, direction, special) {
+        var prefix = (special === "true") ? "missile-" : "bomb-";
+        var className = (special === "true") ? "missile" : "bomb";
+        var bulletSize = (special === "true") ? config.missileSize : config.bombSize;
+        var node = document.getElementById(prefix + id);
+        if (!node) {
+          node = document.createElement("div");
+          document.body.appendChild(node);
+          node.className = className;
+          node.style.zIndex= id + 1;
+          node.id = prefix + id;
+          node.style.width = bulletSize + "px";
+          node.style.height = bulletSize + "px";
+        }
+        node.style.left = (parseInt(x) - bulletSize/2) + "px";
+        node.style.top = (parseInt(y) - bulletSize/2) + "px";
+        var rotatedeg = "rotate(90deg)"
+        if (direction === "1") {
+          rotatedeg = "rotate(0deg)"
+        } else if(direction === "2") {
+          rotatedeg = "rotate(270deg)"
+        } else if(direction === "3") {
+          rotatedeg = "rotate(180deg)"
+        }
+        node.style.transform = rotatedeg;
+      }
+      //"hit %s %s %d %t", target.ID, bullet.ID, target.LIFE, bullet.SPECIAL
+      function hit(id, bulletid, life, special) {
+        var node = document.getElementById("target-" + id);
+        if (node) {
+          var newsize = config.maxSize - config.dmgSize*(config.maxLife-life)
+          node.style.width = newsize + "px";
+          node.style.height = newsize + "px";
+          if (id === myid) {
+            mylife = life;
+            mysize = newsize;
+          }
+          var msg = document.createElement("div");
+          document.body.appendChild(msg);
+          msg.className = "msg " + "msg-" + id;
+          msg.style.zIndex= -1;
+          msg.style.position = "absolute";
+          var message = (special === "true") ? config.missileMessage : config.dmgMessage;
+          msg.textContent = message;
+          msg.style.left = (parseInt(node.style.left,10) + newsize) + "px";
+          msg.style.top = (parseInt(node.style.top,10) + newsize/2) + "px";
+        }
+        var prefix = (special === "true") ? "missile-" : "bomb-";
+        var bullet = document.getElementById(prefix + bulletid);
+        if (bullet) {
+          document.body.removeChild(bullet);
+        }
+        if (bulletid === myid && special === "true") {
+          missileload = true;
+        }
+      }
+      //"miss %s %t", bullet.ID, bullet.SPECIAL
+      function miss(bulletid, special) {
+        var prefix = (special === "true") ? "missile-" : "bomb-";
+        var bullet = document.getElementById(prefix + bulletid);
+        if (bullet) {
+          document.body.removeChild(bullet);
+        }
+        if (bulletid === myid && special === "true") {
+          missileload = true;
+        }
+      }
+      //"dead %s %s %t", target.ID, bullet.ID, bullet.SPECIAL
+      function dead(id, bulletid, special) {
+        if (bulletid === myid && special === "true") {
+          missileload = true;
+        }
+        var node = document.getElementById("target-" + id);
+        if (node) {
+          document.body.removeChild(node);
+        }
+        var prefix = (special === "true") ? "missile-" : "bomb-";
+        var bullet = document.getElementById(prefix + bulletid);
+        if (bullet) {
+          document.body.removeChild(bullet);
+        }
+        var msgs = document.querySelectorAll(".msg-" + id)
+        for(var i=0; i<msgs.length; i++) {
+          document.body.removeChild(msgs[i])
+        }
+        if (id === myid) {
+          mylife = 0;
+          document.body.className = "body-gameover";
+          document.body.style.animation = "background-animation 4s linear infinite alternate"
+          if (timerid) {
+            console.log("Stop refresh event...")
+            setTimeout(function() {clearInterval(timerid)}, 10000)
+          }
+        }
+      }
+      //Enter your name or continue without entering name 
+      window.addEventListener("load", function (e) {
+        if (location.search != null && location.search != "") {
+          myname = location.search.replace("?name=","");
+          myname = decodeURI(myname);
+        }
+        if (myname === "") {
+          myname = window.prompt("Enter your name");
+          myname = myname.trim().replace(/ /g, "_");
+          if(myname === "") {
+            myname = "guest";
+          }
+        }
+        init();
+      });
+      //move target event
+      window.addEventListener("mousemove", function (e) {
+        if (myid > -1 && mylife > 0) {
+          show(myid, e.pageX, e.pageY, mylife, myname, mycharge);
+          var dx = e.pageX - prevX;
+          var dy = e.pageY - prevY;
+          if( dx != 0 || dy != 0 ){
+            if (Math.abs(dx)>=Math.abs(dy)) {
+              bulletDirection = (dx>=0) ? 1 : 3;
+            } else {
+              bulletDirection = (dy>=0) ? 0 : 2;
+            }
+            prevX = e.pageX;
+            prevY = e.pageY;
+          }
+          ws.send(["show", e.pageX, e.pageY, mycharge].join(" "));
+        }
+      });
+      //charge event
+      window.addEventListener("mousedown", function (e) {
+        if (missileload === true) {
+          if (mycharge === "none") {
+            chargingTimerid = setTimeout(()=>{
+              mycharge = "charging";
+              show(myid, e.pageX, e.pageY, mylife, myname, mycharge);
+              ws.send(["show", e.pageX, e.pageY, mycharge].join(" "));
+              chargedTimerid = setTimeout(()=>{
+                mycharge = "charged"
+                show(myid, e.pageX, e.pageY, mylife, myname, mycharge);
+                ws.send(["show", e.pageX, e.pageY, mycharge].join(" "));
+              }, config.missileCharged);
+            }, config.missileCharging);
+          }
+        }
+      });
+      //fire bomb or missile event
+      window.addEventListener("mouseup", function(e) {
+        if(chargingTimerid) {
+          clearTimeout(chargingTimerid);
+          chargingTimerid = undefined;
+        }
+        if(chargedTimerid) {
+          clearTimeout(chargedTimerid);
+          chargedTimerid = undefined;
+        }
+        if (myid > -1 && mylife > 0) {
+          if(mycharge === "charged") {
+            mycharge = "none";
+            show(myid, e.pageX, e.pageY, mylife, myname, mycharge);
+            ws.send(["show", e.pageX, e.pageY, mycharge].join(" "));
+            if (missileload === true){
+              missileload = false;
+              bullet(myid, e.pageX, e.pageY, bulletDirection, "true");
+              ws.send(["fire-missile", e.pageX, e.pageY, bulletDirection].join(" "));
+            }
+          } else {
+            mycharge = "none";
+            show(myid, e.pageX, e.pageY, mylife, myname, mycharge);
+            ws.send(["show", e.pageX, e.pageY, mycharge].join(" "));
+            bullet(myid, e.pageX, e.pageY, bulletDirection, "false");
+            ws.send(["fire-bomb", e.pageX, e.pageY, bulletDirection].join(" "));
+          }
+        }
+      })
+      //gameover continue event
+      window.addEventListener("keydown", function(e) {
+        if (mylife <= 0) {
+          setTimeout(function(){
+            location.replace("?name=" + encodeURI(myname));
+          },500);
+        }
+      });
+      function refreshEvent() {
+        ws.send(["refresh"].join(" "))
+      }
+    </script>
+  </body>
+</html>
