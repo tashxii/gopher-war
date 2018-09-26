@@ -7,8 +7,8 @@ Shooting game of gopher using websocket implemented by melody(https://github.com
 
 ## How to play
 
-Move ... move cursor.
-Fire bomb ... click.
-Fire missile ... press right mouse button and hold on over 1.0sec(can be configured), then release the button.
+Move ... move cursor.  
+Fire bomb ... click.  
+Fire missile ... press right mouse button and hold on over 1.0sec(can be configured), then release the button.  
 ![missile](screenshot/missile-shoot.png)
 
